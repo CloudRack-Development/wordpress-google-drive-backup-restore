@@ -2,8 +2,8 @@
 /*
 Plugin Name: WordPress Google Drive Backup and Restore
 Description: Backup and restore your WordPress site to Google Drive.
-Version: 1.0.0
-Author: Your Name
+Version: v0.7
+Author: Cloudrack Development
 */
 
 require_once __DIR__ . '/vendor/autoload.php';  // Composer autoloader for Google API Client
@@ -115,6 +115,9 @@ add_action('admin_init', function() {
                 if (isset($_POST['backup_files'])) {
                     delete_backups($_POST['backup_files']);
                 }
+            } elseif ($_GET['action'] === 'download' && isset($_GET['file_id'])) {
+                $file_id = sanitize_text_field($_GET['file_id']);
+                download_backup($file_id);
             }
         }
     }
@@ -148,7 +151,7 @@ function authenticate_google_drive() {
     }
 
     $auth_url = $client->createAuthUrl();
-    echo '<a href="' . $auth_url . '" class="button button-primary">Connect to Google Drive</a>';
+    echo '<a href="' . $auth_url . '" class="<button button-primary">Connect to Google Drive</a>';
     return false;
 }
 
@@ -170,13 +173,14 @@ function display_backups() {
         echo '<form method="post" action="' . admin_url('options-general.php?page=gdrive-backup-restore&action=delete') . '">';
         wp_nonce_field('gdrive_backup_restore_delete');
         echo '<table class="widefat">';
-        echo '<thead><tr><th><input type="checkbox" id="select_all"></th><th>File Name</th></tr></thead>';
+        echo '<thead><tr><th><input type="checkbox" id="select_all"></th><th>File Name</th><th>Download</th></tr></thead>';
         echo '<tbody>';
         foreach ($files->getFiles() as $file) {
             if (strpos($file->getName(), $backup_prefix) === 0) {
                 echo '<tr>';
                 echo '<td><input type="checkbox" name="backup_files[]" value="' . $file->getId() . '"></td>';
                 echo '<td>' . $file->getName() . '</td>';
+                echo '<td><a href="' . admin_url('options-general.php?page=gdrive-backup-restore&action=download&file_id=' . $file->getId()) . '">Download</a></td>'; // Add download link
                 echo '</tr>';
             }
         }
@@ -276,4 +280,37 @@ function delete_backups($file_ids) {
 
     wp_redirect(admin_url('options-general.php?page=gdrive-backup-restore'));
     exit;
+}
+
+// Function to handle download action
+function download_backup($file_id) {
+    $client = new Google_Client();
+    $client->setAccessToken(get_option('gdrive_access_token'));
+    $drive_service = new Google_Service_Drive($client);
+
+    // Get file metadata
+    try {
+        $file = $drive_service->files->get($file_id, array('fields' => 'name, size'));
+    } catch (Exception $e) {
+        wp_die(__('Error: Unable to retrieve file metadata.'));
+    }
+
+    // Prepare headers for file download
+    header('Content-Description: File Transfer');
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename="' . basename($file->getName()) . '"');
+    header('Expires: 0');
+    header('Cache-Control: must-revalidate');
+    header('Pragma: public');
+    header('Content-Length: ' . $file->getSize());
+
+    // Get file content
+    try {
+        $response = $drive_service->files->get($file_id, array('alt' => 'media'));
+        $content = $response->getBody()->getContents();
+        echo $content;
+        exit;
+    } catch (Exception $e) {
+        wp_die(__('Error: Unable to download file.'));
+    }
 }
